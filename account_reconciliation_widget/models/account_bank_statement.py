@@ -150,7 +150,7 @@ class AccountBankStatementLine(models.Model):
 
         # Fully reconciled moves are just linked to the bank statement
         total = self.amount
-        currency = self.currency_id or statement_currency
+        currency = self.foreign_currency_id or statement_currency
         for aml_rec in payment_aml_rec:
             balance = (
                 aml_rec.amount_currency if aml_rec.currency_id else aml_rec.balance
@@ -222,6 +222,7 @@ class AccountBankStatementLine(models.Model):
         aml_obj.with_context(check_move_validity=False).create(liquidity_aml_dict)
 
         self.sequence = self.statement_id.line_ids.ids.index(self.id) + 1
+        self.move_id.ref = self._get_move_ref(self.statement_id.name)
         counterpart_moves = counterpart_moves | self.move_id
 
         # Complete dicts to create both counterpart move lines and write-offs
@@ -271,13 +272,19 @@ class AccountBankStatementLine(models.Model):
 
         return counterpart_moves
 
+    def _get_move_ref(self, move_ref):
+        ref = move_ref or ""
+        if self.ref:
+            ref = move_ref + " - " + self.ref if move_ref else self.ref
+        return ref
+
     def _prepare_move_line_for_currency(self, aml_dict, date):
         self.ensure_one()
         company_currency = self.journal_id.company_id.currency_id
         statement_currency = self.journal_id.currency_id or company_currency
-        st_line_currency = self.currency_id or statement_currency
+        st_line_currency = self.foreign_currency_id or statement_currency
         st_line_currency_rate = (
-            self.currency_id and (self.amount_currency / self.amount) or False
+            self.foreign_currency_id and (self.amount_currency / self.amount) or False
         )
         company = self.company_id
 
@@ -285,7 +292,7 @@ class AccountBankStatementLine(models.Model):
             aml_dict["amount_currency"] = aml_dict["debit"] - aml_dict["credit"]
             aml_dict["currency_id"] = st_line_currency.id
             if (
-                self.currency_id
+                self.foreign_currency_id
                 and statement_currency.id == company_currency.id
                 and st_line_currency_rate
             ):
@@ -297,7 +304,7 @@ class AccountBankStatementLine(models.Model):
                 aml_dict["credit"] = company_currency.round(
                     aml_dict["credit"] / st_line_currency_rate
                 )
-            elif self.currency_id and st_line_currency_rate:
+            elif self.foreign_currency_id and st_line_currency_rate:
                 # Statement is in foreign currency and the transaction is in
                 # another one
                 aml_dict["debit"] = statement_currency._convert(
